@@ -1,0 +1,43 @@
+name: Deploy a Azure Container Apps
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ACR: acrmlopsfabian2026
+  RG: rg-mlops
+  APP: app-diabetes
+  IMAGE: diabetes-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Checkout del código
+        uses: actions/checkout@v4
+
+      - name: 2. Login en Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 3. Login en Container Registry
+        run: echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ env.ACR }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+      - name: 4. Build y push de la imagen Docker
+        run: |
+          docker build -t ${{ env.ACR }}.azurecr.io/${{ env.IMAGE }}:${{ github.sha }} .
+          docker push ${{ env.ACR }}.azurecr.io/${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: 5. Desplegar en Container App
+        run: |
+          az extension add --name containerapp --upgrade -y
+          az containerapp registry set -n ${{ env.APP }} -g ${{ env.RG }} \
+            --server ${{ env.ACR }}.azurecr.io \
+            --username ${{ secrets.ACR_USERNAME }} --password ${{ secrets.ACR_PASSWORD }}
+          az containerapp secret set -n ${{ env.APP }} -g ${{ env.RG }} \
+            --secrets dbx-url="${{ secrets.DATABRICKS_URL }}" dbx-token="${{ secrets.DATABRICKS_TOKEN }}"
+          az containerapp update -n ${{ env.APP }} -g ${{ env.RG }} \
+            --image ${{ env.ACR }}.azurecr.io/${{ env.IMAGE }}:${{ github.sha }} \
+            --set-env-vars DATABRICKS_URL=secretref:dbx-url DATABRICKS_TOKEN=secretref:dbx-token
