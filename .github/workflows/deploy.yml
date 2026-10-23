@@ -4,11 +4,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   ACR: acrmlopsfabian2026
   RG: rg-mlops
   APP: app-diabetes
   IMAGE: diabetes-api
+  GHCR_IMAGE: ghcr.io/fabianortiz2510/diabetes-api
 
 jobs:
   deploy:
@@ -22,22 +27,22 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: 3. Login en Container Registry
-        run: echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ env.ACR }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+      - name: 3. Login en Container Registries (ACR y GHCR)
+        run: |
+          echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ env.ACR }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: 4. Build y push de la imagen Docker
         run: |
-          docker build -t ${{ env.ACR }}.azurecr.io/${{ env.IMAGE }}:${{ github.sha }} .
+          docker build -t ${{ env.ACR }}.azurecr.io/${{ env.IMAGE }}:${{ github.sha }} -t ${{ env.GHCR_IMAGE }}:${{ github.sha }} .
           docker push ${{ env.ACR }}.azurecr.io/${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.GHCR_IMAGE }}:${{ github.sha }}
 
       - name: 5. Desplegar en Container App
         run: |
           az extension add --name containerapp --upgrade -y
-          az containerapp registry set -n ${{ env.APP }} -g ${{ env.RG }} \
-            --server ${{ env.ACR }}.azurecr.io \
-            --username ${{ secrets.ACR_USERNAME }} --password ${{ secrets.ACR_PASSWORD }}
           az containerapp secret set -n ${{ env.APP }} -g ${{ env.RG }} \
             --secrets dbx-url="${{ secrets.DATABRICKS_URL }}" dbx-token="${{ secrets.DATABRICKS_TOKEN }}"
           az containerapp update -n ${{ env.APP }} -g ${{ env.RG }} \
-            --image ${{ env.ACR }}.azurecr.io/${{ env.IMAGE }}:${{ github.sha }} \
+            --image ${{ env.GHCR_IMAGE }}:${{ github.sha }} \
             --set-env-vars DATABRICKS_URL=secretref:dbx-url DATABRICKS_TOKEN=secretref:dbx-token
